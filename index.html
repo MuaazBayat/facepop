@@ -12,8 +12,8 @@
     </div>
 
 </div>
-<script type="module" src="https://muaazbayat.github.io/facepop/src/momento.js">
-import { initMomento, subscribeToMessages, publish  } from '../src/momento.js';
+<script type="module">
+import { initMomento, subscribeToMessages, publish  } from './src/momento.js';
 
 initMomento();
 subscribeToMessages('cache', 'visitor:abc:inbox', onEvent)
