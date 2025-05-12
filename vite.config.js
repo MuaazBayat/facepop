@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   optimizeDeps: {
-    base: '/facepop/',
+    base: '/facepop-agents/',
     include: ['@gomomento/sdk-web']
   },
 });
