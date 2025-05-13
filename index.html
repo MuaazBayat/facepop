@@ -13,7 +13,7 @@
 
 </div>
 <script type="module">
-import { initMomento, subscribeToMessages, publish  } from './src/momento.js';
+import {  initMomento, subscribeToMessages, publish, getKey, setKey, deleteKey, valueExists  } from './src/momento.js';
 
 initMomento();
 subscribeToMessages('cache', 'visitor:abc:inbox', onEvent)
@@ -24,10 +24,43 @@ const callButton = document.getElementById('callButton');
 hangupButton.disabled = true;
 
 const localVideo = document.getElementById('localVideo');
-const remoteVideo = document.getElementById('remoteVideo');
+let remoteVideo = document.getElementById('remoteVideo');
 
 let pc;
 let localStream;
+let remoteCandidatesBuffer = [];
+let remoteDescriptionSet = false;
+
+
+
+const allThere = async (from, totalParts) => {
+    for (let index = 1; index <= totalParts; index++) {
+      console.log(`checking cache.. if ${from}-${index} has a value`)
+      const exists = await valueExists("cache", `${from}-${index}`)
+      if (!exists) {
+        console.log(`we did not find ${from}-${index}`)
+        console.log(`we are missing part ${index} of ${totalParts}`)
+        return false
+      }
+    }
+    console.log(`we have ${totalParts}/${totalParts}  parts in cache`)
+    return true
+  }
+
+  const pieceTogether = async (from, totalParts) => {
+    let message = ""
+    for (let index = 1; index <= totalParts; index++) {
+      const value = await getKey("cache", `${from}-${index}`)
+      // We dont want them chilling in the cache
+      deleteKey('cache',`${from}-${index}`)
+      message += value ?? ""
+    }
+    console.log(`Assembled full object: ${message}`)
+    return message
+  }
+  function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // MAIN EVENT HANDLER
 async function onEvent(e){
@@ -39,20 +72,56 @@ async function onEvent(e){
       handleOffer(e);
       break;
     case 'answer':
-      handleAnswer(e);
+      console.log('answer', e);
+      //handleAnswer(e);
+      // A visitor is sending an offer
+      // These come in 2 parts (limits on message size), so we need to
+      // 1. Receive the offer and the part count
+      // 2. Just save it in the cache
+      // 3. Check if we have all the parts
+      // 4. If we do, we will piece it together
+      // 5. We need to set up the local stream
+      // 6. Set the remote description with the offer
+      // 7. Create an answer
+      // 8. Send the answer back to the visitor in 2 parts
+      // 9. Set the local description with the answer
+      // 10. Set the state to active
+      // 1. Receive the offer and the part count
+      const { part, totalParts, sdpFragment, from } = e
+      // 2. Just save it in the cache
+      await setKey("cache", `${from}-${part}`, sdpFragment)
+      // 3. Check if we have all the parts
+      const ready = await allThere(from, totalParts)
+      console.log(`ready: ${ready}`)
+      console.log(pc.signalingState);
+      if (ready) {
+        // 4. If we do, we will piece it together
+        const fullSdp = await pieceTogether(from, totalParts)
+        //console.log("Assembled full SDP:", fullSdp)
+        // 6. Set the remote description with the offer
+       await pc.setRemoteDescription({type: 'answer', sdp: fullSdp})
+
+      remoteDescriptionSet = true;
+      remoteCandidatesBuffer.forEach(candidate => {
+        pc.addIceCandidate(new RTCIceCandidate(candidate))
+          .catch(e => console.error("Error adding ICE candidate from buffer:", e));
+      });
+      remoteCandidatesBuffer = [];
+        }    
       break;
     case 'candidate':
-      handleCandidate(e);
+      handleRemoteIceCandidate(e);
       break;
     case 'call-accepted':
       // Startup video locally
       localStream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
       localVideo.srcObject = localStream;
 
-      await createPeerConnection();
+      await setupRTC();
+      console.log(pc.signalingState);
 
-      const offer = await pc.createOffer();
-      console.log('offer', offer);
+      const offer =  await pc.createOffer();
+      console.log(`offer created with details: ${offer}`);
 
       const sdp = offer.sdp;
       const midpoint = Math.ceil(sdp.length / 2);
@@ -75,11 +144,12 @@ async function onEvent(e){
       };
       //console.log(JSON.stringify(offer))
       await publish('cache','agent:xyz:inbox', JSON.stringify(sdpMessagePart1))
+      await sleep(2000);
       await publish('cache','agent:xyz:inbox', JSON.stringify(sdpMessagePart2))
       
       //signaling.postMessage({type: 'offer', sdp: offer.sdp});
-      await pc.setLocalDescription(offer);
-
+      await pc.setLocalDescription(offer)
+     
       break;
     case 'ready':
       // A second tab joined. This tab will initiate a call unless in a call already.
@@ -99,7 +169,14 @@ async function onEvent(e){
       break;
   }
 }
-
+function handleRemoteIceCandidate(candidate) {
+  if (remoteDescriptionSet) {
+    pc.addIceCandidate(new RTCIceCandidate(candidate))
+      .catch(e => console.error("Error adding ICE candidate:", e));
+  } else {
+    remoteCandidatesBuffer.push(candidate);
+  }
+}
 callButton.onclick = async () => {
 
   startButton.disabled = true;
@@ -141,8 +218,19 @@ async function hangup() {
   hangupButton.disabled = true;
 };
 
-function createPeerConnection() {
+
+function setupRTC(){
+
+  if (pc) {
+    console.error('cannot create RTC connection if there is existing one');
+    return;
+  }
+
+  console.log(`setting up RTC Peerconnection`);
   pc = new RTCPeerConnection();
+  // RTC Connection event handlers
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  // Ice candidate event
   pc.onicecandidate = e => {
     const message = {
       type: 'candidate',
@@ -153,40 +241,43 @@ function createPeerConnection() {
       message.sdpMid = e.candidate.sdpMid;
       message.sdpMLineIndex = e.candidate.sdpMLineIndex;
     }
+    publish('cache','agent:xyz:inbox', JSON.stringify(message))
     //signaling.postMessage(message);
   };
-  pc.ontrack = e => remoteVideo.srcObject = e.streams[0];
-  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-}
+  pc.ontrack = (e) => {
+  console.log('[ontrack] Received track:', e.track.kind);
+  console.log('[ontrack] MediaStream:', e.streams[0]);
 
-async function makeCall() {
-  await createPeerConnection();
-
-  const offer = await pc.createOffer();
-  signaling.postMessage({type: 'offer', sdp: offer.sdp});
-  await pc.setLocalDescription(offer);
-}
-
-async function handleOffer(offer) {
-  if (pc) {
-    console.error('existing peerconnection');
-    return;
+  e.streams[0].getTracks().forEach(track => {
+    console.log('[ontrack] Stream contains track:', track.kind);
+  });
+  try {
+    remoteVideo.srcObject = e.streams[0];
+  } catch (error) {
+    console.error('Error setting remote video source:', error);
   }
-  await createPeerConnection();
-  await pc.setRemoteDescription(offer);
+};
 
-  const answer = await pc.createAnswer();
-  signaling.postMessage({type: 'answer', sdp: answer.sdp});
-  await pc.setLocalDescription(answer);
 }
 
-async function handleAnswer(answer) {
-  if (!pc) {
-    console.error('no peerconnection');
-    return;
-  }
-  await pc.setRemoteDescription(answer);
-}
+// function createPeerConnection() {
+//   pc = new RTCPeerConnection();
+//   pc.onicecandidate = e => {
+//     const message = {
+//       type: 'candidate',
+//       candidate: null,
+//     };
+//     if (e.candidate) {
+//       message.candidate = e.candidate.candidate;
+//       message.sdpMid = e.candidate.sdpMid;
+//       message.sdpMLineIndex = e.candidate.sdpMLineIndex;
+//     }
+//     //signaling.postMessage(message);
+//   };
+//   pc.ontrack = e => remoteVideo.srcObject = e.streams[0];
+//   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+// }
+
 
 async function handleCandidate(candidate) {
   if (!pc) {
