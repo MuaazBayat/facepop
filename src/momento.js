@@ -1,61 +1,86 @@
 import { CredentialProvider, TopicClient, CacheDeleteResponse, TopicItem, CacheClient, Configurations, CreateCacheResponse, CacheSetResponse, CacheGetResponse } from "@gomomento/sdk-web";
 
 
-let client;
-let momentoCache;
+let momentoTopicClient;
+let momentoCacheClient;
 
 export async function initMomento() {
-    console.log(`initializing momento client`);
-    const authToken = import.meta.env.VITE_MOMENTO_AUTH_TOKEN;
-    console.log(`auth token: ${authToken}`);
-    const credentials = CredentialProvider.fromString({apiKey: authToken})
-    // const configuration = Configurations.Laptop.v1();
-    // // const props: CacheClientProps = {
-    // //     CredentialProvider,
-    // //     configuration,
-    // //     defaultTtlSeconds: 60,
-    // // }
+  console.log(`Initializing Momento client`);
 
-    client = new TopicClient({credentialProvider: credentials});
-    console.log(`created momento client ${client}`);
-    console.log(`creating momento cache client`);
-    momentoCache = await CacheClient.create({
+  try {
+    const authToken = import.meta.env.VITE_MOMENTO_AUTH_TOKEN;
+    if (!authToken) {
+      throw new Error("Missing VITE_MOMENTO_AUTH_TOKEN in environment variables");
+    }
+
+    console.log(`Auth token found`);
+
+    const credentials = CredentialProvider.fromString({ apiKey: authToken });
+
+    try {
+      momentoCacheClient = await CacheClient.create({
         configuration: Configurations.Laptop.v1(),
         credentialProvider: CredentialProvider.fromString(authToken),
         defaultTtlSeconds: 60,
       });
-    console.log(`created momento cache client ${momentoCache}`);
-};
+      console.log(`Created Momento cache client`, momentoCacheClient);
+    } catch (cacheErr) {
+      console.error(`Error creating Momento cache client:`, cacheErr);
+    }
+
+    try {
+      momentoTopicClient = new TopicClient({ credentialProvider: credentials });
+      console.log(`Created Momento topic client`, momentoTopicClient);
+    } catch (topicErr) {
+      console.error(`Error creating Momento topic client:`, topicErr);
+    }
+
+  } catch (err) {
+    console.error(`Failed to initialize Momento:`, err);
+  }
+}
 
 
 export async function subscribeToMessages(cacheName, topic, handle) {
-    if (!client) {
+  try {
+    if (!momentoTopicClient) {
       throw new Error("Momento not initialized");
     }
-  
-    client.subscribe(cacheName, topic, {
+
+    console.log(`Subscribing to topic "${topic}" on cache "${cacheName}"...`);
+
+    momentoTopicClient.subscribe(cacheName, topic, {
       onItem: function(msg) {
-        if (!msg.value()) return;
-  
         try {
-          const data = JSON.parse(msg.value());
+          const raw = msg.value();
+          if (!raw) {
+            console.warn("Received empty message");
+            return;
+          }
+
+          const data = JSON.parse(raw);
+          console.log(`Received message on topic "${topic}":`, data);
           handle(data);
         } catch (e) {
-          console.error("Failed to parse message value as JSON:", e);
+          console.error("Failed to handle incoming message:", e);
         }
       },
       onError: function(err) {
-        console.error("Subscription error:", err);
-      }
+        console.error(`Subscription error on topic "${topic}":`, err);
+      },
     });
-  };
+
+  } catch (err) {
+    console.error("Failed to subscribe to topic:", err);
+  }
+}
 
 
 export function publish(cacheName, topic, message) {
     console.log(`Publishing message to topic ${topic}`);
-    if (!client) throw new Error("Momento not initialized");
+    if (!momentoTopicClient) throw new Error("Momento not initialized");
     // Publish the message to the topic
-    return client.publish(cacheName, topic, message)
+    return momentoTopicClient.publish(cacheName, topic, message)
       .then(() => {
         console.log(`Message successfully published to ${topic}`);
       })
@@ -64,40 +89,9 @@ export function publish(cacheName, topic, message) {
       });
   }
 
-
-  function subscribe(cacheName, topic, functionToHandleIncomingMessages) {
-    console.log("subscribing to momento topic", topic);
-    
-    if (!client) {
-      throw new Error("Momento not initialized");
-    }
-  
-    return client.subscribe(cacheName, topic, {
-      onItem: function(msg) {
-        if (msg.value()) {
-          console.log(msg);
-          functionToHandleIncomingMessages(msg);
-        }
-      },
-      onError: function(err) {
-        console.error("Momento error:", err);
-      }
-    });
-  }
-
-//   // TYPES
-// export interface SignalMessage {
-//     type: "sdp-offer" | "answer" | "candidate";
-//     sdpFragment?: RTCSessionDescriptionInit;
-//     candidate?: RTCIceCandidateInit;
-//     sender: string;
-// }
-  
-  
-
 export async function createCache(cacheName){
-    if (!momentoCache) throw new Error("Momento not initialized");
-    const result = await momentoCache.createCache(cacheName);
+    if (!momentoCacheClient) throw new Error("Momento not initialized");
+    const result = await momentoCacheClient.createCache(cacheName);
     switch (result.type) {
       case CreateCacheResponse.AlreadyExists:
         console.log(`Cache '${cacheName}' already exists`);
@@ -109,23 +103,24 @@ export async function createCache(cacheName){
 }
 
 export async function setKey(cacheName, key, value){
-    if (!momentoCache) throw new Error("Momento not initialized");
+    if (!momentoCacheClient) throw new Error("Momento not initialized");
 
-    const result = await momentoCache.set(cacheName,key,value);
+    const result = await momentoCacheClient.set(cacheName,key,value);
     switch (result.type) {
         case CacheSetResponse.Success:
-            console.log("Key 'test-key' stored successfully");
+            console.log(`Key ${key} stored successfully`);
             break;
         case CacheSetResponse.Error:
           throw new Error(
-            `An error occurred while attempting to store key 'test-key' in cache '${cacheName}': ${result.errorCode()}: ${result.toString()}`
+            `An error occurred while attempting to store key ${key} in cache '${cacheName}': ${result.errorCode()}: ${result.toString()}`
           );
     }
 }
 
 export async function getKey(cacheName, key){
-    if (!momentoCache) throw new Error("Momento not initialized");
-    const getResponse = await momentoCache.get(cacheName,key);
+    if (!momentoCacheClient) throw new Error("Momento not initialized");
+    
+    const getResponse = await momentoCacheClient.get(cacheName,key);
     switch (getResponse.type) {
         case CacheGetResponse.Hit:
             console.log(`Retrieved value for key '${key}'`);
@@ -135,13 +130,13 @@ export async function getKey(cacheName, key){
             break;
         case CacheGetResponse.Error:
     
-        throw new Error(`An error occurred while attempting to get key 'test-key' from cache '${cacheName}': ${getResponse.errorCode()}: ${getResponse.toString()}`);
+        throw new Error(`An error occurred while attempting to get key ${key} from cache '${cacheName}': ${getResponse.errorCode()}: ${getResponse.toString()}`);
     }
 }
 
 export async function valueExists(cacheName, key){
-    if (!momentoCache) throw new Error("Momento not initialized");
-    const getResponse = await momentoCache.get(cacheName,key);
+    if (!momentoCacheClient) throw new Error("Momento not initialized");
+    const getResponse = await momentoCacheClient.get(cacheName,key);
     switch (getResponse.type) {
         case CacheGetResponse.Hit:
             console.log(`${key} exists in ${cacheName}`)
@@ -158,11 +153,11 @@ export async function valueExists(cacheName, key){
 
 
 export async function deleteKey(cacheName, key){
-  if (!momentoCache) throw new Error("Momento not initialized");
-  const result = await momentoCache.delete(cacheName, key);
+  if (!momentoCacheClient) throw new Error("Momento not initialized");
+  const result = await momentoCacheClient.delete(cacheName, key);
   switch (result.type) {
     case CacheDeleteResponse.Success:
-      console.log("Key 'test-key' deleted successfully");
+      console.log(` ${key} deleted successfully`);
       break;
     case CacheDeleteResponse.Error:
       throw new Error(
