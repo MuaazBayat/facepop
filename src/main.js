@@ -5,6 +5,8 @@ const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
+const statusText = document.getElementById('statusText');
+const container = document.getElementById('container');
 
 hangupButton.disabled = true;
 
@@ -23,16 +25,39 @@ subscribeToMessages(cacheName, `visitor:${visitorId}:inbox`, onEvent);
 callButton.onclick = handleCallClick;
 hangupButton.onclick = handleHangupClick;
 
+setUIState('idle');
+
+function setUIState(state) {
+  callButton.disabled = state !== 'idle';
+  hangupButton.disabled = state === 'idle' || state === 'ended';
+
+  switch (state) {
+    case 'idle':
+      statusText.textContent = 'Call an agent!';
+      break;
+    case 'calling':
+      statusText.textContent = 'Calling...';
+      break;
+    case 'in-call':
+      statusText.textContent = 'You’re in a call';
+      break;
+    case 'ended':
+      statusText.textContent = 'Call ended';
+      break;
+  }
+
+  container.className = `card ${state}`;
+}
+
 async function handleCallClick() {
-  hangupButton.disabled = false;
+  setUIState('calling');
 
   const message = createEventMessage('call');
   publish(cacheName, `agent:${agentId}:inbox`, message);
 }
 
 async function handleHangupClick() {
-  hangupButton.disabled = true;
-  callButton.disabled = false;
+  setUIState('ended');
 
   const message = createEventMessage('hangup');
   await publish(cacheName, `agent:${agentId}:inbox`, message);
@@ -64,6 +89,7 @@ async function onEvent(e) {
       break;
     case 'bye':
       await hangup();
+      setUIState('ended');
       break;
     default:
       console.log('unhandled', e);
@@ -72,14 +98,12 @@ async function onEvent(e) {
 
 async function handleAnswer(e) {
   const { part, totalParts, sdpFragment, from } = e;
-
   await setKey(cacheName, `${from}-${part}`, sdpFragment);
 
   const ready = await allThere(cacheName, from, totalParts);
   if (!ready) return;
 
   const fullSdp = await pieceTogether(cacheName, from, totalParts);
-
   const success = await trySetRemoteDescription(fullSdp);
   if (success) flushBufferedCandidates();
 }
@@ -94,6 +118,8 @@ async function handleAccepted() {
   await pc.setLocalDescription(offer);
 
   await sendOfferInFragments(cacheName, agentId, visitorId, offer.sdp);
+
+  setUIState('in-call');
 }
 
 function setupRTC() {

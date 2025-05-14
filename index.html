@@ -1,17 +1,24 @@
 <!DOCTYPE html>
 <html>
-<body>
-<div id="container">
-    <h1>ividiyo visitor</h1>
-    <video id="localVideo" playsinline autoplay muted></video>
-    <video id="remoteVideo" playsinline autoplay></video>
-
-    <div class="box">
-        <button id="callButton">Call</button>
-        <button id="hangupButton">Hang Up</button>
+  <head>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div class="call-card-container">
+      <div id="container" class="card idle">
+        <div class="card-body">
+          <h1 id="statusText">Call an agent!</h1>
+          <div class="participants">
+            <video id="localVideo" class="local-video" autoplay muted></video>
+            <video id="remoteVideo" class="remote-video" autoplay></video>
+          </div>  
+        </div>
+        <div class="card-footer">
+          <button id="callButton">Call</button>
+          <button id="hangupButton">Hang Up</button>
+        </div>
+      </div>
     </div>
-
-</div>
-<script type="module" src="./src/main.js"></script>
-</body>
+    <script type="module" src="./src/main.js"></script>
+  </body>
 </html>
