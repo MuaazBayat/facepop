@@ -4,17 +4,10 @@ import { CredentialProvider, TopicClient, CacheDeleteResponse, TopicItem, CacheC
 let momentoTopicClient;
 let momentoCacheClient;
 
-export async function initMomento() {
+export async function initMomento(authToken) {
   console.log(`Initializing Momento client`);
 
   try {
-    const authToken = import.meta.env.VITE_MOMENTO_AUTH_TOKEN;
-    if (!authToken) {
-      throw new Error("Missing VITE_MOMENTO_AUTH_TOKEN in environment variables");
-    }
-
-    console.log(`Auth token found`);
-
     const credentials = CredentialProvider.fromString({ apiKey: authToken });
 
     try {

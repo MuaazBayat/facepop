@@ -1,5 +1,14 @@
-import { initMomento, subscribeToMessages, publish, setKey } from './momento.js';
+import { initMomento, subscribeToMessages, publish, getKey } from './momento.js';
 import { allThere, pieceTogether, sendOfferInFragments } from './utils.js';
+import { start } from './setup.js';
+
+const agentId = 'xyz';
+const visitorId = await crypto.randomUUID();
+
+await start(visitorId);
+
+
+const cacheName = import.meta.env.VITE_CACHE_NAME;
 
 const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');
@@ -7,6 +16,7 @@ const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 const statusText = document.getElementById('statusText');
 const container = document.getElementById('container');
+const offerFragments = new Map(); // Map<from, { totalParts, parts: Map<index, sdpFragment> }>
 
 hangupButton.disabled = true;
 
@@ -15,17 +25,25 @@ let localStream;
 let remoteCandidatesBuffer = [];
 let remoteDescriptionSet = false;
 
-const cacheName = 'test';
-const agentId = 'xyz';
-const visitorId = 'abc';
-
-await initMomento();
-subscribeToMessages(cacheName, `visitor:${visitorId}:inbox`, onEvent);
 
 callButton.onclick = handleCallClick;
 hangupButton.onclick = handleHangupClick;
 
-setUIState('idle');
+const available = await isAgentAvailable();
+
+if (available) {
+  setUIState('idle');
+} else {
+  callButton.disabled = true;
+  statusText.textContent = 'Agent is currently unavailable';
+  container.className = 'card unavailable';
+}
+async function isAgentAvailable() {
+  console.log('Checking agent availability...');
+  return getKey('agent', `${agentId}-online`)
+    .then(value => value === 'true')
+    .catch(() => false);
+}
 
 function setUIState(state) {
   callButton.disabled = state !== 'idle';
@@ -42,6 +60,7 @@ function setUIState(state) {
       statusText.textContent = 'You’re in a call';
       break;
     case 'ended':
+      callButton.disabled = false;
       statusText.textContent = 'Call ended';
       break;
   }
@@ -74,7 +93,7 @@ function createEventMessage(type, data = {}) {
   });
 }
 
-async function onEvent(e) {
+export async function onEvent(e) {
   console.log(`incoming event: ${e.type}`);
 
   switch (e.type) {
@@ -87,7 +106,7 @@ async function onEvent(e) {
     case 'call-accepted':
       await handleAccepted();
       break;
-    case 'bye':
+    case 'hangup':
       await hangup();
       setUIState('ended');
       break;
@@ -98,12 +117,37 @@ async function onEvent(e) {
 
 async function handleAnswer(e) {
   const { part, totalParts, sdpFragment, from } = e;
-  await setKey(cacheName, `${from}-${part}`, sdpFragment);
 
-  const ready = await allThere(cacheName, from, totalParts);
-  if (!ready) return;
+  // WHY NOT USE IN MEMORY?
+  
+  // Initialize if not present
+  if (!offerFragments.has(from)) {
+    offerFragments.set(from, {
+      totalParts,
+      parts: new Map()
+    });
+  }
 
-  const fullSdp = await pieceTogether(cacheName, from, totalParts);
+  const entry = offerFragments.get(from);
+  entry.parts.set(part, sdpFragment);
+
+  // Check if all parts are received
+  if (entry.parts.size < totalParts) return;
+
+  // Reassemble full SDP
+  let fullSdp = "";
+  for (let i = 1; i <= totalParts; i++) {
+    const fragment = entry.parts.get(i);
+    if (!fragment) {
+      console.error(`Missing fragment ${i} from ${from}`);
+      return;
+    }
+    fullSdp += fragment;
+  }
+
+  // Clean up
+  offerFragments.delete(from);
+
   const success = await trySetRemoteDescription(fullSdp);
   if (success) flushBufferedCandidates();
 }
