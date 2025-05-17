@@ -1,5 +1,9 @@
-# facepop
-## 📞 Visitor Video Modal – P2P Live Sales Chat
+![4](https://github.com/user-attachments/assets/48638d79-fd2e-45d6-9c04-9f1cee56a309)
+
+# ividiyo modal - visitor video modal
+The video call modal that can be embedded on any site
+
+---
 
 This is the **Visitor Modal** component of the **P2P Video Modal** system — an embeddable video call widget that allows website visitors to instantly start a live video conversation with a sales agent.
 
