@@ -1,14 +1,11 @@
-import { initMomento, subscribeToMessages, publish, getKey } from './momento.js';
-import { allThere, pieceTogether, sendOfferInFragments } from './utils.js';
+import { publish, getKey} from './momento.js';
+import { sendOfferInFragments } from './utils.js';
 import { start } from './setup.js';
+import  { agentId, cacheName } from './config.js'
 
-const agentId = 'xyz';
 const visitorId = await crypto.randomUUID();
 
-await start(visitorId);
-
-
-const cacheName = import.meta.env.VITE_CACHE_NAME;
+await start(visitorId, agentId);
 
 const callButton = document.getElementById('callButton');
 const hangupButton = document.getElementById('hangupButton');

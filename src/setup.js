@@ -1,16 +1,11 @@
 import { initMomento, subscribeToMessages, getKey } from './momento.js';
 import { onEvent } from './main.js';
-const cacheName = import.meta.env.VITE_CACHE_NAME;
-const agentId = 'xyz';
+import { cacheName, api } from './config.js'; 
 
-export async function start(visitorId) {
+export async function start(visitorId, agentId) {
    
   try {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL;
-    if (!backendUrl) {
-        throw new Error("Missing VITE_BACKEND_URL in environment variables");
-      }
-    const response = await fetch(`${backendUrl}/token?agentId=${agentId}&visitorId=${visitorId}`, {
+    const response = await fetch(`${api}/token?agentId=${agentId}&visitorId=${visitorId}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

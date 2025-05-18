@@ -1,8 +1,12 @@
 {
-  "name": "facepop",
-  "private": true,
-  "version": "0.0.0",
+  "name": "ividiyo",
+  "private": false,
+  "main": "./dist/index.js",
+  "version": "0.0.3",
   "type": "module",
+  "exports": {
+    "default": "./dist/index.js"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
